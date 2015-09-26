@@ -1,0 +1,6 @@
+nestle.mean_and_cov
+===================
+
+.. currentmodule:: nestle
+
+.. autofunction:: mean_and_cov

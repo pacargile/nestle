@@ -1,0 +1,31 @@
+.. _examples-index:
+
+Gallery of Examples
+===================
+
+Examples
+========
+
+These are some examples!
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbContainer" tooltip="Example of fitting a straight line to some data. ">
+
+.. figure:: /auto_examples/images/thumb/sphx_glr_plot_line_thumb.png
+
+    :ref:`example_auto_examples_plot_line.py`
+
+.. raw:: html
+
+    </div>
+
+
+.. toctree::
+   :hidden:
+
+   /auto_examples/plot_line
+.. raw:: html
+
+    <div style='clear:both'></div>
+

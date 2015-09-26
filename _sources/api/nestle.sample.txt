@@ -1,0 +1,6 @@
+nestle.sample
+=============
+
+.. currentmodule:: nestle
+
+.. autofunction:: sample

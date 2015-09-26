@@ -1,0 +1,32 @@
+nestle.Result
+=============
+
+.. currentmodule:: nestle
+
+.. autoclass:: Result
+
+   
+   .. automethod:: __init__
+
+   
+   .. rubric:: Methods
+
+   .. autosummary::
+   
+      ~Result.clear
+      ~Result.copy
+      ~Result.fromkeys
+      ~Result.get
+      ~Result.items
+      ~Result.keys
+      ~Result.pop
+      ~Result.popitem
+      ~Result.setdefault
+      ~Result.update
+      ~Result.values
+   
+   
+
+   
+   
+   

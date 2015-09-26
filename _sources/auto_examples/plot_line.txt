@@ -1,0 +1,48 @@
+
+
+.. _example_auto_examples_plot_line.py:
+
+
+====
+Line
+====
+
+Example of fitting a straight line to some data.
+
+
+
+.. rst-class:: sphx-glr-horizontal
+
+
+    *
+
+      .. image:: images/sphx_glr_plot_line_001.png
+            :scale: 47
+
+    *
+
+      .. image:: images/sphx_glr_plot_line_002.png
+            :scale: 47
+
+
+**Script output**:
+
+.. rst-class:: sphx-glr-script-out
+
+  ::
+
+    logz = -35.898 +/-  0.098
+    iterations: 14676
+    function calls: 23610
+    m =  0.50 +/-  0.01
+    b = 10.10 +/-  0.07
+
+
+**Python source code:** :download:`plot_line.py <plot_line.py>`
+
+.. literalinclude:: plot_line.py
+    :lines: 8-
+
+**Total running time of the example:**  6.60 seconds
+( 0 minutes  6.60 seconds)
+    
