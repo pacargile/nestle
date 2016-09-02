@@ -683,7 +683,7 @@ _SAMPLERS = {'classic': ClassicSampler,
 def sample(loglikelihood, prior_transform, ndim, npoints=100,
            method='single', update_interval=None, npdim=None,
            maxiter=None, maxcall=None, dlogz=None, decline_factor=None,
-           rstate=None, callback=None, **options):
+           rstate=None, callback=None, user_sample=None,**options):
     """Perform nested sampling to evaluate Bayesian evidence.
 
     Parameters
@@ -766,6 +766,11 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
         iteration, use the convience function
         ``callback=nestle.print_progress``. 
 
+    user_sample : array, optional
+        Array of random loctions within the prior unit cube. Shape is 
+        the same as active_u (npoints x npdim). Allows user to 
+        do the random sampling of initial volumne outside of Nestle. Useful
+        when prior volumne is not uniform.
 
     Other Parameters
     ----------------
@@ -855,12 +860,17 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
             raise ValueError("update_interval must be >= 1")
 
     # Initialize active points and calculate likelihoods
-    active_u = rstate.rand(npoints, npdim)  # position in unit cube
+    if user_sample is None:
+        active_u = rstate.rand(npoints, npdim)  # position in unit cube
+    else:
+        active_u = user_sample
+
     active_v = np.empty((npoints, ndim), dtype=np.float64)  # real params
     active_logl = np.empty(npoints, dtype=np.float64)  # log likelihood
     for i in range(npoints):
         active_v[i, :] = prior_transform(active_u[i, :])
         active_logl[i] = loglikelihood(active_v[i, :])
+
 
     sampler = _SAMPLERS[method](loglikelihood, prior_transform, active_u,
                                 rstate, options)
@@ -876,12 +886,18 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
                                                      # have volume 1-e^(1/n)
     ncall = npoints  # number of calls we already made
 
+    worst = np.argmin(active_logl)
+    logwt = logvol + active_logl[worst]
+
     # Initialize sampler
     sampler.update(1./npoints)
 
     callback_info = {'it': 0,
                      'logz': logz,
-                     'active_u': active_u,
+                     'logwt':logwt,
+                     'logvol':logvol,
+                     'worst_u': active_u[worst],
+                     'worst_v': active_v[worst],
                      'sampler': sampler}
 
     # Nested sampling loop.
@@ -891,7 +907,7 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
     since_update = 0
     while it < maxiter:
         if (callback is not None) and (it > 0):
-            callback_info.update(it=it, logz=logz)
+            callback_info.update(it=it, logz=logz, logwt=logwt, logvol=logvol, active_u=worst_u,active_v=worst_v,sampler=sampler)
             callback(callback_info)
 
         # worst object in collection and its weight (= volume * likelihood)
@@ -925,6 +941,9 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
         # Choose a new point from within the likelihood constraint
         # (having logl > loglstar).
         u, v, logl, nc = sampler.new_point(loglstar)
+        worst_u = u
+        worst_v = v
+
 
         # replace worst point with new point
         active_u[worst] = u
