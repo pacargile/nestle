@@ -14,6 +14,13 @@ try:
 except ImportError:  # pragma: no cover
     HAVE_KMEANS = False
 
+# for slice sampling
+try:
+    from squish import SliceSampler
+    HAVE_SQUISH = True
+except ImportError:
+    HAVE_SQUISH = False
+
 __all__ = ["sample", "print_progress", "mean_and_cov", "resample_equal",
            "Result"]
 __version__ = "0.1.1"
@@ -528,7 +535,7 @@ def sample_ellipsoids(ells, rstate=np.random):
     nells = len(ells)
 
     if nells == 1:
-        return ells[0].sample(rstate=rstate)
+        return ells[0].sample(rstate=rstate),0
 
     # Select an ellipsoid at random, according to volumes
     vols = np.array([ell.vol for ell in ells])
@@ -547,9 +554,9 @@ def sample_ellipsoids(ells, rstate=np.random):
     # Only accept the point with probability 1/n
     # (If rejected, sample again).
     if n == 1 or rstate.rand() < 1.0 / n:
-        return x
+        return x,i
     else:
-        return sample_ellipsoids(ells, rstate=rstate)
+        return sample_ellipsoids(ells, rstate=rstate),i
 
 
 # -----------------------------------------------------------------------------
@@ -658,17 +665,121 @@ class MultiEllipsoidSampler(Sampler):
         for ell in self.ells:
             ell.scale_to_vol(ell.vol * self.enlarge)
 
-    def new_point(self, loglstar):
+    def new_point(self, loglstar, maxrejcall):
         ncall = 0
         logl = -float('inf')
         while logl < loglstar:
             while True:
-                u = sample_ellipsoids(self.ells, rstate=self.rstate)
+                u,iell = sample_ellipsoids(self.ells, rstate=self.rstate)
                 if np.all(u > 0.) and np.all(u < 1.):
                     break
             v = self.prior_transform(u)
             logl = self.loglikelihood(v)
             ncall += 1
+            if ncall == maxrejcall:
+                return 0,0,0,-1
+        return u, v, logl, ncall
+
+class SingleEllipsoidSliceSampler(SingleEllipsoidSampler):
+
+    def set_options(self, options):
+        self.enlarge = options.get('enlarge', 1.2)
+        self.sliceiter = options.get('sliceiter', None)
+        # set default slicer object, set with self.ell.axes == 0
+        self.slicer = SliceSampler(np.array([0]), self.lnpost)
+
+    def lnpost(self, v):
+        return self.loglikelihood(self.prior_transform(v))
+         
+    def new_point(self, loglstar, sliceiter=None):
+        if sliceiter != None:
+            pass
+        elif self.sliceiter != None:
+            sliceiter = self.sliceiter
+        else:
+            sliceiter = 5
+
+        ncall = 0
+        logl = -float('inf')
+        while logl < loglstar:
+            self.slicer.reset()
+            # randomly sample a point and check if it has logl > loglstar
+            while True:                
+                # randomly draw new point from ellipse
+                # u0 = self.ell.sample(rstate=self.rstate)
+                # randomly draw new point from active_u
+                u0 = self.points[np.random.randint(0,len(self.points),1)][0]
+                self.slicer.transform = self.ell.axes
+                if np.all(u0 > 0.) and np.all(u0 < 1.):
+                    break
+            v0 = self.prior_transform(u0)
+            logl0 = self.loglikelihood(v0)
+            ncall += 1
+            # if logl0 == np.nan_to_num(-np.inf):
+            #     continue
+            # if logl0 > loglstar:
+            #     return u0,v0,logl0,ncall
+            # if logl < loglstar, do slice sampling to find a better live point
+            ii = 0
+            for u, logl in self.slicer.sample(u0, logl0, niter=sliceiter, storechain=False):
+                # check to see if slice sample returned a logl > loglstar
+                # if logl > loglstar:
+                #     break            
+                if ii == 25:
+                    break
+                else:
+                    ii =+ 1
+            v = self.prior_transform(u)
+            ncall += self.slicer.nlike
+            self.slicer.reset()
+
+        return u, v, logl, ncall
+
+class MultiEllipsoidSliceSampler(MultiEllipsoidSampler):
+
+    def set_options(self, options):
+        self.enlarge = options.get('enlarge', 1.2)
+        self.sliceiter = options.get('sliceiter', None)
+        # set default slicer object, set with self.ell.axes == 0
+        self.slicer = SliceSampler(np.array([0]), self.lnpost)
+
+    def lnpost(self, v):
+        return self.loglikelihood(self.prior_transform(v))
+         
+    def new_point(self, loglstar, sliceiter=None):
+
+        if sliceiter != None:
+            pass
+        elif self.sliceiter != None:
+            sliceiter = self.sliceiter
+        else:
+            sliceiter = 5
+
+        ncall = 0
+        logl = -float('inf')
+        while logl < loglstar:
+            self.slicer.reset()
+            while True:
+                # Multi ellipsoid version.  bounding_ellipsoids() needs to also
+                # return the index of the ellipse it chose.
+                u0, iell = sample_ellipsoids(self.ells, rstate=self.rstate)
+                self.slicer.transform = self.ells[iell].axes
+                if np.all(u0 > 0.) and np.all(u0 < 1.):
+                    break
+            v0 = self.prior_transform(u0)
+            logl0 = self.loglikelihood(v0)
+            ncall += 1
+            if logl0 == np.nan_to_num(-np.inf):
+                continue
+            if logl0 > loglstar:
+                return u0,v0,logl0,ncall
+
+            for u, logl in self.slicer.sample(u0, logl0, niter=sliceiter, storechain=False):
+                if logl > loglstar:
+                    break                    
+            v = self.prior_transform(u)
+            ncall += self.slicer.nlike
+            self.slicer.reset()
 
         return u, v, logl, ncall
 
@@ -678,12 +789,16 @@ class MultiEllipsoidSampler(Sampler):
 
 _SAMPLERS = {'classic': ClassicSampler,
              'single': SingleEllipsoidSampler,
-             'multi': MultiEllipsoidSampler}
+             'multi': MultiEllipsoidSampler,
+             'singleslice': SingleEllipsoidSliceSampler,
+             'multislice': MultiEllipsoidSliceSampler,
+             }
+
 
 def sample(loglikelihood, prior_transform, ndim, npoints=100,
            method='single', update_interval=None, npdim=None,
-           maxiter=None, maxcall=None, dlogz=None, decline_factor=None,
-           rstate=None, callback=None, user_sample=None,**options):
+           maxiter=None, maxcall=None, maxrejcall=None, dlogz=None, 
+           decline_factor=None,rstate=None, callback=None, user_sample=None,**options):
     """Perform nested sampling to evaluate Bayesian evidence.
 
     Parameters
@@ -736,6 +851,11 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
     maxcall : int, optional
         Maximum number of likelihood evaluations. Iteration may stop earlier
         if termination condition is reached. Default is no limit.
+
+    maxrejcall: int, optional
+        Maximum number of rejection samples for each iteration. If this
+        limit is hit, then the sampler will redefine the ellipses based on 
+        the active points and start rejection sampling over.
 
     dlogz : float, optional
         If supplied, iteration will stop when the estimated contribution
@@ -832,6 +952,9 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
     if maxcall is None:
         maxcall = sys.maxsize
 
+    if maxrejcall is None:
+        maxrejcall = sys.maxsize
+
     if method == 'multi' and not HAVE_KMEANS:
         raise ValueError("scipy.cluster.vq.kmeans2 is required for the "
                          "'multi' method.")  # pragma: no cover
@@ -893,6 +1016,7 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
     sampler.update(1./npoints)
 
     callback_info = {'it': 0,
+                     'ncall':0,
                      'logz': logz,
                      'logwt':logwt,
                      'logvol':logvol,
@@ -906,9 +1030,9 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
     it = 0
     since_update = 0
     while it < maxiter:
-        if (callback is not None) and (it > 0):
-            callback_info.update(it=it, logz=logz, logwt=logwt, logvol=logvol, active_u=worst_u,active_v=worst_v,sampler=sampler)
-            callback(callback_info)
+        # if (callback is not None) and (it > 0):
+        #     callback_info.update(it=it, logz=logz, logwt=logwt, logvol=logvol, active_u=worst_u,active_v=worst_v,sampler=sampler)
+        #     callback(callback_info)
 
         # worst object in collection and its weight (= volume * likelihood)
         worst = np.argmin(active_logl)
@@ -920,6 +1044,11 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
              math.exp(logz - logz_new) * (h + logz) -
              logz_new)
         logz = logz_new
+
+        if (callback is not None) and (it > 0):
+            callback_info.update(it=it, ncall=ncall,logz=logz, logwt=logwt, logvol=logvol, 
+                active_u=active_u[worst],active_v=active_v[worst],sampler=sampler)
+            callback(callback_info)
 
         # Add worst object to samples.
         saved_v.append(np.array(active_v[worst]))
@@ -940,7 +1069,17 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
 
         # Choose a new point from within the likelihood constraint
         # (having logl > loglstar).
-        u, v, logl, nc = sampler.new_point(loglstar)
+        # edit: have it run new_point, stop if ncall==maxrejcall, 
+        # redefine ellipses and start over
+        while True:
+            u, v, logl, nc = sampler.new_point(loglstar,maxrejcall)
+            if nc == -1:
+                sampler.update(pointvol)
+                since_update = 0
+                ncall += maxrejcall
+            else:
+                break
+
         worst_u = u
         worst_v = v
 
@@ -987,10 +1126,18 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
              math.exp(logz - logz_new) * (h + logz) -
              logz_new)
         logz = logz_new
+        logl = loglikelihood(active_v[i, :])
         saved_v.append(np.array(active_v[i]))
         saved_logwt.append(logwt)
         saved_logl.append(active_logl[i])
         saved_logvol.append(logvol)
+
+
+        if (callback is not None):
+            callback_info.update(it=it+i, ncall=ncall, logz=logz, logwt=logwt, logvol=logvol, 
+                active_u=active_u[i],active_v=active_v[i],sampler=sampler)
+            callback(callback_info)
+
 
     # h should always be nonnegative (we take the sqrt below).
     # Numerical error makes it negative in pathological corner cases
