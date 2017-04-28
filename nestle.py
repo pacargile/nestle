@@ -566,12 +566,14 @@ class Sampler:
     """A sampler simply selects a new point obeying the likelihood bound,
     given some existing set of points."""
 
-    def __init__(self, loglikelihood, prior_transform, points, rstate,
+    def __init__(self, loglikelihood, prior_transform, points, rstate, args, kwargs,
                  options):
         self.loglikelihood = loglikelihood
         self.prior_transform = prior_transform
         self.points = points
         self.rstate = rstate
+        self.args = args
+        self.kwargs = kwargs
         self.set_options(options)
 
 
@@ -606,7 +608,7 @@ class ClassicSampler(Sampler):
                 if np.all(new_u > 0.) and np.all(new_u < 1.):
                     break
             new_v = self.prior_transform(new_u)
-            new_logl = self.loglikelihood(new_v)
+            new_logl = self.loglikelihood(new_v, *self.args, **self.kwargs)
             if new_logl >= loglstar:
                 u = new_u
                 v = new_v
@@ -647,7 +649,7 @@ class SingleEllipsoidSampler(Sampler):
                 if np.all(u > 0.) and np.all(u < 1.):
                     break
             v = self.prior_transform(u)
-            logl = self.loglikelihood(v)
+            logl = self.loglikelihood(v, *self.args, **self.kwargs)
             ncall += 1
 
         return u, v, logl, ncall
@@ -674,7 +676,7 @@ class MultiEllipsoidSampler(Sampler):
                 if np.all(u > 0.) and np.all(u < 1.):
                     break
             v = self.prior_transform(u)
-            logl = self.loglikelihood(v)
+            logl = self.loglikelihood(v, *self.args, **self.kwargs)
             ncall += 1
             if ncall == maxrejcall:
                 return 0,0,0,-1
@@ -689,7 +691,7 @@ class SingleEllipsoidSliceSampler(SingleEllipsoidSampler):
         self.slicer = SliceSampler(np.array([0]), self.lnpost)
 
     def lnpost(self, v):
-        return self.loglikelihood(self.prior_transform(v))
+        return self.loglikelihood(self.prior_transform(v), *self.args, **self.kwargs)
          
     def new_point(self, loglstar, sliceiter=None):
         if sliceiter != None:
@@ -713,7 +715,7 @@ class SingleEllipsoidSliceSampler(SingleEllipsoidSampler):
                 if np.all(u0 > 0.) and np.all(u0 < 1.):
                     break
             v0 = self.prior_transform(u0)
-            logl0 = self.loglikelihood(v0)
+            logl0 = self.loglikelihood(v0, *self.args, **self.kwargs)
             ncall += 1
             # if logl0 == np.nan_to_num(-np.inf):
             #     continue
@@ -744,7 +746,7 @@ class MultiEllipsoidSliceSampler(MultiEllipsoidSampler):
         self.slicer = SliceSampler(np.array([0]), self.lnpost)
 
     def lnpost(self, v):
-        return self.loglikelihood(self.prior_transform(v))
+        return self.loglikelihood(self.prior_transform(v), *self.args, **self.kwargs)
          
     def new_point(self, loglstar, sliceiter=None):
 
@@ -767,7 +769,7 @@ class MultiEllipsoidSliceSampler(MultiEllipsoidSampler):
                 if np.all(u0 > 0.) and np.all(u0 < 1.):
                     break
             v0 = self.prior_transform(u0)
-            logl0 = self.loglikelihood(v0)
+            logl0 = self.loglikelihood(v0, *self.args, **self.kwargs)
             ncall += 1
             if logl0 == np.nan_to_num(-np.inf):
                 continue
@@ -796,7 +798,7 @@ _SAMPLERS = {'classic': ClassicSampler,
 
 
 def sample(loglikelihood, prior_transform, ndim, npoints=100,
-           method='single', update_interval=None, npdim=None,
+           method='single', update_interval=None, npdim=None,args=[],kwargs={},
            maxiter=None, maxcall=None, maxrejcall=None, dlogz=None, 
            decline_factor=None,rstate=None, callback=None, user_sample=None,**options):
     """Perform nested sampling to evaluate Bayesian evidence.
@@ -843,6 +845,12 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
         in the case where a parameter of loglikelihood is dependent upon
         multiple independently distributed parameters, some of which may be
         nuisance parameters. 
+
+    args : list, optional
+        list of args sent to the user defined loglikelihood function
+
+    kwargs : dict, optional
+        dictionary of kwargs sent to the user defined loglikelihood function
 
     maxiter : int, optional
         Maximum number of iterations. Iteration may stop earlier if
@@ -992,11 +1000,11 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
     active_logl = np.empty(npoints, dtype=np.float64)  # log likelihood
     for i in range(npoints):
         active_v[i, :] = prior_transform(active_u[i, :])
-        active_logl[i] = loglikelihood(active_v[i, :])
+        active_logl[i] = loglikelihood(active_v[i, :],*args,**kwargs)
 
 
     sampler = _SAMPLERS[method](loglikelihood, prior_transform, active_u,
-                                rstate, options)
+                                rstate, args, kwargs, options)
 
     # Initialize values for nested sampling loop.
     saved_v = []  # stored points for posterior results
@@ -1022,7 +1030,9 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
                      'logvol':logvol,
                      'worst_u': active_u[worst],
                      'worst_v': active_v[worst],
-                     'sampler': sampler}
+                     'sampler': sampler,
+                     'h':h,
+                     }
 
     # Nested sampling loop.
     ndecl = 0
@@ -1047,7 +1057,7 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
 
         if (callback is not None) and (it > 0):
             callback_info.update(it=it, ncall=ncall,logz=logz, logwt=logwt, logvol=logvol, 
-                active_u=active_u[worst],active_v=active_v[worst],sampler=sampler)
+                active_u=active_u[worst],active_v=active_v[worst],sampler=sampler,h=h)
             callback(callback_info)
 
         # Add worst object to samples.
@@ -1126,7 +1136,7 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
              math.exp(logz - logz_new) * (h + logz) -
              logz_new)
         logz = logz_new
-        logl = loglikelihood(active_v[i, :])
+        logl = loglikelihood(active_v[i, :],*args,**kwargs)
         saved_v.append(np.array(active_v[i]))
         saved_logwt.append(logwt)
         saved_logl.append(active_logl[i])
@@ -1135,7 +1145,7 @@ def sample(loglikelihood, prior_transform, ndim, npoints=100,
 
         if (callback is not None):
             callback_info.update(it=it+i, ncall=ncall, logz=logz, logwt=logwt, logvol=logvol, 
-                active_u=active_u[i],active_v=active_v[i],sampler=sampler)
+                active_u=active_u[i],active_v=active_v[i],sampler=sampler,h=h)
             callback(callback_info)
 
 
